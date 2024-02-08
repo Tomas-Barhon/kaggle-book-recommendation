@@ -1,8 +1,13 @@
 import pandas as pd
 from sklearn.neighbors import NearestNeighbors
 import scipy
+import json
+from sklearn.preprocessing import OneHotEncoder, OrdinalEncoder, normalize
+
 
 class Pipeline:
+    MAPPING_PATH = "./../data/similarity_mapping.json"
+
     def __init__(self) -> None:
         pass
 
@@ -31,11 +36,10 @@ class Pipeline:
     @staticmethod
     def knn_age_imputing(row, csr, categories, df, mapping, nn_model):
         if pd.isna(row.Age):
-            #find nearest neighbors according to the books he rates
+            # find nearest neighbors according to the books he rates
             neigbours = Pipeline.find_k_nearest_neighbors(mapping.get(row.userID), csr,
-            categories = categories, nn_model=nn_model)
-
-            #remove NAs and compute mean age of these neighbors
+                                                          categories=categories, nn_model=nn_model)
+            # remove NAs and compute mean age of these neighbors
             return df.loc[df.userID.isin(neigbours)].dropna().Age.mean()
         else:
             return row.Age
@@ -43,31 +47,60 @@ class Pipeline:
     @staticmethod
     def create_item_item_similarity_mapping():
         combined_data = pd.read_csv("./../data/merged_data.csv")
+        # deleting implicit feedback
+        combined_data.loc[combined_data.bookRating == 0,["bookRating"]] = 1
+        # Reducing number of users
+        users_high = combined_data["userID"].value_counts() > 200
+        ids_high = users_high[users_high].index.tolist()
+        combined_data = combined_data.loc[combined_data.userID.isin(ids_high)]
+        # Reducing number of books
+        books_high = combined_data["bookTitle"].value_counts() > 50
+        ids_high = books_high[books_high].index.tolist()
+        combined_data = combined_data.loc[combined_data.bookTitle.isin(
+            ids_high)]
+
         combined_data.userID = combined_data.userID.astype("category")
         combined_data.bookTitle = combined_data.bookTitle.astype("category")
         users = combined_data["userID"].unique()
         book_titles = combined_data["bookTitle"].unique()
         shape = (len(book_titles), len(users))
+        # setting implicit feedback to 3 for now
+        print(len(combined_data))
+        print(shape)
         coo = scipy.sparse.coo_matrix((combined_data.bookRating,
-                        (combined_data.bookTitle.cat.codes,
-                         combined_data.userID.cat.codes)),
-                                    shape=shape)
+                                       (combined_data.bookTitle.cat.codes,
+                                        combined_data.userID.cat.codes)),
+                                      shape=shape)
         csr = coo.tocsr()
-        nn_model = NearestNeighbors(n_neighbors=5, algorithm="auto",
-                            metric="cosine")
+        # normalizing user ratings (features)
+        csr = normalize(csr, norm="l1", axis=0)
+        # Appending book biblio data to csr matrix
+        #columns = ["bookAuthor", "publisher"]
+        #biblio_data = []
+        #combined_data.drop_duplicates(subset=["bookTitle"], inplace=True)
+        #for column in columns:
+        #    one_hot = OneHotEncoder()
+        #    biblio_data.append(one_hot.fit_transform(combined_data[[column]]))
+        # ordinally encoding years
+        #ordinal = OrdinalEncoder()
+        #biblio_data.append(ordinal.fit_transform(
+        #    combined_data[["yearOfPublication"]]))
+        #csr = scipy.sparse.hstack((csr, biblio_data[0], biblio_data[1],
+        #                           biblio_data[2]))
+        print(csr.shape)
+        nn_model = NearestNeighbors(n_neighbors=6, algorithm="brute",
+                                    metric="cosine", n_jobs=-1)
         nn_model.fit(csr)
         _, nearest_neighbors = nn_model.kneighbors(csr)
         cat_nearest_books = pd.Categorical.from_codes(nearest_neighbors,
-                                         categories=combined_data.bookTitle.cat.categories)
-        return {title:list(similar.to_numpy()) for title, similar in zip(combined_data.bookTitle.unique(),cat_nearest_books)}
+                                                      categories=combined_data.bookTitle.cat.categories)
+        mapping = {neigbours[0]: list(neigbours[1:]) for neigbours in cat_nearest_books}
+        with open(Pipeline.MAPPING_PATH, "w") as json_file:
+            json.dump(mapping, json_file)
+        return (combined_data.bookTitle.unique(), combined_data.bookTitle.cat.categories)
+
     @staticmethod
-    def get_item_item_similar(combined_data) -> list:
-        users = combined_data["userID"].unique()
-        book_titles = combined_data["bookTitle"].unique()
-        shape = (len(users), len(book_titles))
-        coo = scipy.sparse.coo_matrix((combined_data.bookRating,
-                        (combined_data.userID.cat.codes,
-                    combined_data.bookTitle.cat.codes)),
-                                    shape=shape)
-        csr = coo.tocsr()
-        
+    def get_item_item_similar_mapping() -> list:
+        with open(Pipeline.MAPPING_PATH, "r") as json_file:
+            item_items_mapping = json.load(json_file)
+        return item_items_mapping
