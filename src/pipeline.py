@@ -48,17 +48,16 @@ class Pipeline:
     def create_item_item_similarity_mapping():
         combined_data = pd.read_csv("./../data/merged_data.csv")
         # deleting implicit feedback
-        combined_data.loc[combined_data.bookRating == 0,["bookRating"]] = 1
+        combined_data.loc[combined_data.bookRating == 0,["bookRating"]] = 5
         # Reducing number of users
-        users_high = combined_data["userID"].value_counts() > 200
+        users_high = combined_data.groupby("userID").count()["bookRating"] > 100
         ids_high = users_high[users_high].index.tolist()
-        combined_data = combined_data.loc[combined_data.userID.isin(ids_high)]
+        combined_data = combined_data.loc[combined_data.userID.isin(ids_high)].copy()
         # Reducing number of books
-        books_high = combined_data["bookTitle"].value_counts() > 50
-        ids_high = books_high[books_high].index.tolist()
+        books_high = combined_data.groupby("bookTitle").count()["bookRating"] > 50
+        books_ids_high = books_high[books_high].index.tolist()
         combined_data = combined_data.loc[combined_data.bookTitle.isin(
-            ids_high)]
-
+            books_ids_high)].copy()
         combined_data.userID = combined_data.userID.astype("category")
         combined_data.bookTitle = combined_data.bookTitle.astype("category")
         users = combined_data["userID"].unique()
@@ -80,11 +79,11 @@ class Pipeline:
         #combined_data.drop_duplicates(subset=["bookTitle"], inplace=True)
         #for column in columns:
         #    one_hot = OneHotEncoder()
-        #    biblio_data.append(one_hot.fit_transform(combined_data[[column]]))
+        #    biblio_data.append(one_hot.fit_transform(combined_data.sort_values(by="bookTitle")[[column]]))
         # ordinally encoding years
         #ordinal = OrdinalEncoder()
         #biblio_data.append(ordinal.fit_transform(
-        #    combined_data[["yearOfPublication"]]))
+        #    combined_data.sort_values(by="bookTitle")[["yearOfPublication"]]))
         #csr = scipy.sparse.hstack((csr, biblio_data[0], biblio_data[1],
         #                           biblio_data[2]))
         print(csr.shape)
@@ -97,7 +96,6 @@ class Pipeline:
         mapping = {neigbours[0]: list(neigbours[1:]) for neigbours in cat_nearest_books}
         with open(Pipeline.MAPPING_PATH, "w") as json_file:
             json.dump(mapping, json_file)
-        return (combined_data.bookTitle.unique(), combined_data.bookTitle.cat.categories)
 
     @staticmethod
     def get_item_item_similar_mapping() -> list:
